@@ -30,19 +30,47 @@ require_file() {
     [ -f "$1" ] || fail "Required file '$1' was not found."
 }
 
+# Prefer `python -m PyInstaller` so Conda/venv on Windows (Git Bash) does not
+# need `pyinstaller` on PATH (Scripts/ is often missing from bash).
+resolve_build_python() {
+    if [ -n "${PYTHON:-}" ]; then
+        if command -v "${PYTHON}" >/dev/null 2>&1; then
+            command -v "${PYTHON}"
+        elif [ -x "${PYTHON}" ]; then
+            echo "${PYTHON}"
+        else
+            fail "PYTHON is set to '${PYTHON}' but is not a valid interpreter."
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    else
+        fail "No python in PATH. Activate your conda/venv, or set PYTHON to the full path to python.exe (e.g. in Git Bash: export PYTHON=\"\$CONDA_PREFIX/python.exe\")."
+    fi
+}
+
+require_pyinstaller_module() {
+    local py
+    py=$1
+    "${py}" -c "import PyInstaller" 2>/dev/null \
+        || fail "PyInstaller is not installed for: ${py}. Run: ${py} -m pip install pyinstaller"
+}
+
 build_with_spec() {
-    local label device spec_path
+    local label device spec_path py
 
     label=$1
     device=$2
     spec_path=$3
 
-    require_command pyinstaller
+    py=$(resolve_build_python)
+    require_pyinstaller_module "${py}"
     require_file "${spec_path}"
 
-    echo "Building ${label} version..."
+    echo "Building ${label} version (using: ${py} -m PyInstaller)..."
     export X_ANYLABELING_DEVICE="${device}"
-    pyinstaller --noconfirm "${spec_path}"
+    "${py}" -m PyInstaller --noconfirm "${spec_path}"
 }
 
 package_macos_release_zip() {
