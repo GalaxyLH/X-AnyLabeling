@@ -13,6 +13,7 @@ usage() {
 Usage: $(basename "$0") {win-cpu|win-gpu|linux-cpu|linux-gpu|macos}
 
 Build X-AnyLabeling executable artifacts with PyInstaller.
+Aliases: linux-gp -> linux-gpu, win-gp -> win-gpu
 EOF
 }
 
@@ -100,6 +101,12 @@ package_macos_release_zip() {
     echo "Created release zip: ${zip_path}"
     echo "Created checksum: ${sha_path}"
 }
+
+# Accept common shorthands (e.g. linux-gp / win-gp -> *-gpu)
+case "${system}" in
+    linux-gp) system=linux-gpu ;;
+    win-gp) system=win-gpu ;;
+esac
 
 case "${system}" in
     win-cpu)

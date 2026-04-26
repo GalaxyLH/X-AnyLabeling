@@ -59,6 +59,10 @@ class YOLO(Model):
         # Run the parent class's init method
         super().__init__(model_config, on_message)
 
+        self.model_type = self.config["type"]
+        self._ultralytics_model = None
+        self._use_ultralytics_inference = False
+
         model_abs_path = self.get_model_abs_path(self.config, "model_path")
         if not model_abs_path or not os.path.isfile(model_abs_path):
             raise FileNotFoundError(
@@ -68,42 +72,100 @@ class YOLO(Model):
                 )
             )
 
-        self.engine = self.config.get("engine", "ort")
-        if self.engine.lower() == "dnn":
-            from ..engines import DnnBaseModel
+        is_pt_weight = model_abs_path.lower().endswith((".pt", ".pth"))
+        engine_key = self.config.get("engine", "ort")
+        use_ultralytics = engine_key.lower() == "ultralytics" or is_pt_weight
+        if use_ultralytics:
+            _det_model_types = frozenset(
+                {
+                    "yolov5",
+                    "yolov6",
+                    "yolov7",
+                    "yolov8",
+                    "yolov9",
+                    "yolov10",
+                    "doclayout_yolo",
+                    "yolo11",
+                    "yolo12",
+                    "yolo26",
+                    "gold_yolo",
+                    "yolow",
+                    "yolow_ram",
+                    "yolov5_det_track",
+                    "yolov8_det_track",
+                    "yolo11_det_track",
+                    "u_rtdetr",
+                }
+            )
+            if self.model_type not in _det_model_types:
+                raise NotImplementedError(
+                    QCoreApplication.translate(
+                        "Model",
+                        "Ultralytics PyTorch weights (.pt/.pth) are only supported for "
+                        "object detection (HBB) YOLO types. For segmentation, pose, or OBB, "
+                        "export to ONNX and use the default ORT engine, or use a matching "
+                        "model type and weights.",
+                    )
+                )
+            try:
+                from ultralytics import YOLO as UltralyticsYOLO
+            except ImportError as err:
+                raise ImportError(
+                    QCoreApplication.translate(
+                        "Model",
+                        "Loading .pt/.pth or engine:ultralytics requires the "
+                        "ultralytics package: pip install ultralytics",
+                    )
+                ) from err
 
-            self.net = DnnBaseModel(model_abs_path, __preferred_device__)
-            self.input_width = self.config.get("input_width", 640)
-            self.input_height = self.config.get("input_height", 640)
-        elif self.engine.lower() == "trt":
-            from ..engines import TrtBaseModel
-
-            self.net = TrtBaseModel(model_abs_path, __preferred_device__)
-            (
-                _,
-                _,
-                self.input_height,
-                self.input_width,
-            ) = self.net.get_input_shape()
-            if not isinstance(self.input_width, int):
-                self.input_width = self.config.get("input_width", -1)
-            if not isinstance(self.input_height, int):
-                self.input_height = self.config.get("input_height", -1)
+            self._ultralytics_model = UltralyticsYOLO(model_abs_path)
+            self._use_ultralytics_inference = True
+            self.net = None
+            self.engine = "ultralytics"
+            imgsz = self.config.get("imgsz", self.config.get("input_size", 640))
+            if isinstance(imgsz, (list, tuple)) and len(imgsz) >= 2:
+                self.input_height, self.input_width = int(imgsz[0]), int(
+                    imgsz[1]
+                )
+            else:
+                s = int(imgsz)
+                self.input_width = self.input_height = s
         else:
-            self.net = OnnxBaseModel(model_abs_path, __preferred_device__)
-            (
-                _,
-                _,
-                self.input_height,
-                self.input_width,
-            ) = self.net.get_input_shape()
-            if not isinstance(self.input_width, int):
-                self.input_width = self.config.get("input_width", -1)
-            if not isinstance(self.input_height, int):
-                self.input_height = self.config.get("input_height", -1)
+            self.engine = self.config.get("engine", "ort")
+            if self.engine.lower() == "dnn":
+                from ..engines import DnnBaseModel
+
+                self.net = DnnBaseModel(model_abs_path, __preferred_device__)
+                self.input_width = self.config.get("input_width", 640)
+                self.input_height = self.config.get("input_height", 640)
+            elif self.engine.lower() == "trt":
+                from ..engines import TrtBaseModel
+
+                self.net = TrtBaseModel(model_abs_path, __preferred_device__)
+                (
+                    _,
+                    _,
+                    self.input_height,
+                    self.input_width,
+                ) = self.net.get_input_shape()
+                if not isinstance(self.input_width, int):
+                    self.input_width = self.config.get("input_width", -1)
+                if not isinstance(self.input_height, int):
+                    self.input_height = self.config.get("input_height", -1)
+            else:
+                self.net = OnnxBaseModel(model_abs_path, __preferred_device__)
+                (
+                    _,
+                    _,
+                    self.input_height,
+                    self.input_width,
+                ) = self.net.get_input_shape()
+                if not isinstance(self.input_width, int):
+                    self.input_width = self.config.get("input_width", -1)
+                if not isinstance(self.input_height, int):
+                    self.input_height = self.config.get("input_height", -1)
 
         self.replace = True
-        self.model_type = self.config["type"]
         self.classes = self.config.get("classes", [])
         self.stride = self.config.get("stride", 32)
         self.anchors = self.config.get("anchors", None)
@@ -475,6 +537,65 @@ class YOLO(Model):
             clas = pred[:, 5]
         return (bbox, clas, conf, masks, keypoints)
 
+    def _predict_shapes_ultralytics(self, image, image_path=None):
+        """Run HBB detection using Ultralytics (PyTorch .pt / .pth weights)."""
+        if image is None:
+            return []
+        try:
+            image = qt_img_to_rgb_cv_img(image, image_path)
+        except Exception as e:  # noqa
+            logger.warning("Could not inference model")
+            logger.warning(e)
+            return []
+        self.image_shape = image.shape
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        device = self.config.get("ultralytics_device", self.config.get("device"))
+        predict_kwargs = {
+            "source": image_bgr,
+            "conf": float(self.conf_thres),
+            "iou": float(self.iou_thres),
+            "max_det": int(self.max_det),
+            "agnostic_nms": self.agnostic,
+            "verbose": False,
+            "imgsz": (self.input_height, self.input_width),
+        }
+        if self.filter_classes is not None:
+            predict_kwargs["classes"] = self.filter_classes
+        if device is not None and str(device) != "":
+            predict_kwargs["device"] = device
+        results = self._ultralytics_model.predict(**predict_kwargs)
+        r = results[0]
+        if r.boxes is None or len(r.boxes) == 0:
+            return AutoLabelingResult([], replace=self.replace)
+
+        boxes = r.boxes.xyxy.cpu().numpy()
+        class_ids = r.boxes.cls.cpu().numpy().astype(int)
+        scores = r.boxes.conf.cpu().numpy()
+        track_ids = [[] for _ in range(len(boxes))]
+        if self.tracker is not None and (len(boxes) > 0):
+            tracks = self.tracker.update(
+                scores.flatten(),
+                xyxy2xywh(boxes),
+                class_ids.flatten(),
+                image,
+            )
+            if len(tracks) > 0:
+                boxes = tracks[:, :4]
+                track_ids = tracks[:, 4]
+                scores = tracks[:, 5]
+                class_ids = tracks[:, 6]
+        keypoints = [[] for _ in range(len(boxes))]
+        shapes = []
+        for i, (box, class_id, score, _kpt, track_id) in enumerate(
+            zip(boxes, class_ids, scores, keypoints, track_ids)
+        ):
+            if self.task == "det" or self.show_boxes:
+                shape = self.create_rectangle_shape(
+                    box, score, i, class_id, track_id
+                )
+                shapes.append(shape)
+        return AutoLabelingResult(shapes, replace=self.replace)
+
     def predict_shapes(self, image, image_path=None):
         """
         Predict shapes from image
@@ -482,6 +603,11 @@ class YOLO(Model):
 
         if image is None:
             return []
+
+        if getattr(
+            self, "_use_ultralytics_inference", False
+        ) and self.task in ("det",):
+            return self._predict_shapes_ultralytics(image, image_path)
 
         try:
             image = qt_img_to_rgb_cv_img(image, image_path)
@@ -1003,4 +1129,7 @@ class YOLO(Model):
         return boxes
 
     def unload(self):
-        del self.net
+        if getattr(self, "_ultralytics_model", None) is not None:
+            self._ultralytics_model = None
+        if hasattr(self, "net") and self.net is not None:
+            del self.net

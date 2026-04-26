@@ -260,6 +260,8 @@
   config_file: ":/yolov6x_mbla.yaml"
 - model_name: "yolov7-r20230520"
   config_file: ":/yolov7.yaml"
+- model_name: "yolo12_classroom_pt"
+  config_file: ":/yolo12_classroom.yaml"
 - model_name: "yolov8l_oiv7-r20240529"
   config_file: ":/yolov8l_oiv7.yaml"
 - model_name: "yolov8l_seg-r20230620"

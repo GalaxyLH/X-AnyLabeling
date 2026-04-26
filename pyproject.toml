@@ -124,6 +124,10 @@ gpu-cu11 = [
     "onnx>=1.15.0,<1.16.1",
     "onnxruntime-gpu>=1.15.0,<1.19.0; platform_system != 'Darwin'",
 ]
+# YOLO .pt / Ultralytics direct inference (install torch per your platform)
+ultralytics = [
+    "ultralytics>=8.0.0",
+]
 
 [project.urls]
 "Source" = "https://github.com/CVHub520/X-AnyLabeling"

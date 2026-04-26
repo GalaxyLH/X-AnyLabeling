@@ -1,0 +1,23 @@
+type: yolo12
+name: yolo12_classroom-pt
+provider: User
+display_name: YOLO12 Classroom (.pt)
+model_path: /path/to/weights/best_classroom.pt
+iou_threshold: 0.45
+conf_threshold: 0.25
+max_det: 300
+# imgsz: 640
+# device: 0
+classes:
+  - early_answer
+  - head_turn_lr
+  - head_turn_back
+  - stand_up
+  - pass_sus_obj
+  - pick_sus_obj
+  - carry_sus_obj
+  - hands_under_desk
+  - leave_return
+  - raise_hand
+  - destroy_paper
+  - late_answer
